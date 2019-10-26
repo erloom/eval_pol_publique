@@ -6,23 +6,173 @@ output: html_notebook
 On suppose que le fichier RCT.Rdata a été téléchargé.
 
 ```{r}
+library(dplyr)
+library(arsenal) # simple descriptive tables
+library(ggplot2)
 d <- load("RCT.Rdata")
 d <- x
 ```
 
+# Analyse descriptive
+
 ```{r}
+# On change les noms pour avoir quelque chose de plus parlant
+names(d) <- c("Y","incitation","echantillon","age","sexe","education","hadsex","eversex","tb","land2004","hiv2004")
 # Structure de la base
 str(d)
+
 ```
+
+## Ensemble de l'échantillon
+
+Proportion de personnes ayant le HIV dans le dataset : `r sum(d$hiv2004 == 1) / nrow(d)`%, soit `r sum(d$hiv2004 == 1)` personnes.
+
+Variables descriptives. Pas forcément très parlant, on va faire des histogrammes. Quelques observations toutefois :
+
+* 70% de l'échantillon est venu chercher son résultat
+* l'échantillon est composé de 20% témoin, 80% intervention
+* Forte proportion de l'échantillon ayant eu une activité sexuelle
+* Faible prévalence du HIV dans l'échantillon, 5% l'ont
+* Quelques valeurs manquantes : education, hadsex, land
 
 ```{r}
-# Prévalance HIV
-table(d$hiv2004)
+# Statistiques descriptives globales
+summary(arsenal::tableby(~.,data=d))
 ```
 
+Informations supplémentaires avec les graphiques :
 
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+* incitation plutôt bien randomisée, sauf sur les 300 ?
+* Faible éducation, âge jeune, reflète la situation locale ?
 
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+```{r}
+# Distribution globale
+d %>%
+    tidyr::pivot_longer(everything()) %>%
+    ggplot(aes(x=value)) +
+    geom_histogram() +
+    facet_wrap(. ~ name,nrow=4,scales="free")
+```
 
-The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+## Tests par groupe d'intervention :
+
+* Ecart significatif pour Y entre les deux groupes
+* Individus plus vieux, moins éduqués dans l'inrtervention ainsi que pour d'autres variables dont je connais la définition
+* De manière importante : pas de différence statistiquement significative au niveau de la prévalence du HIV
+
+```{r}
+# Statistiques descriptives globales
+summary(arsenal::tableby(echantillon~.,data=d))
+```
+
+On peut aussi mettre ça en graphique pour voir plus en détail la distribution :
+
+* L'effet le plus fort semble l'éducation : l'intervention vise beaucoup plus d'individus sans aucune éducation.
+
+```{r}
+# Distribution globale
+d %>%
+    tidyr::pivot_longer(-echantillon) %>%
+    ggplot(aes(x=value,fill=as.factor(echantillon))) +
+    geom_histogram(aes(y=0.5*..density..),position="dodge") +
+    facet_wrap(. ~ name,nrow=4,scales="free")
+```
+
+Comment cela peut impacter le résultat ?
+
+* On peut supposer que la sélection des individus n'a pas été totalement aléatoire, par exemple en visant certains lieux en particulier plutôt que d'autres. Dans ce cas, l'effet de l'incitation ne sera pas forcément propre car cela pourrait par exemple provenir d'une simple meilleure information pour les individus peu éduqués.
+* Si la sélection est bien aléatoire, c'est la précision de l'estimation qui sera impactée.
+
+```{r}
+# Analyse graphique
+d %>%
+    ggplot(aes(x=as.factor(echantillon),y=Y)) +
+    geom_histogram(stat="identity") +
+    scale_x_discrete(label=c("Non","Oui")) +
+    labs(x="Intervention",
+         y="Nombre d'individus étant allés chercher leur résultat",
+         title="Impact de l'intervention sur le fait d'être allé chercher ses résulats")
+```
+
+Par sous-groupe, on n'oublie pas de normaliser car la taille de chaque groupe diffère. Globalement, on voit un effet progressif de l'intervention sur la probabilité de venir chercher ses résultats.
+
+```{r}
+# Analyse graphique avec incitation monétaire
+d %>%
+    group_by(incitation) %>%
+    summarise(part = sum(Y == 1)/n()) %>%
+    ggplot(aes(x=as.factor(incitation),y=part)) +
+    geom_histogram(stat="identity") +
+    labs(x="Intervention",
+         y="Part d'individus étant allés chercher leur résultat",
+         title="Impact de l'intervention sur le fait d'être allé chercher ses résulats")
+```
+
+# Analyse statistique
+
+1er cas simple : OLS
+
+La présence d'une incitation augmente de 47 points la probabilité de venir chercher ses résultats. C'est en fait juste une différence de la moyenne du nombre de personnes étant allés chercher leurs résultats dans les deux sous-groupes.
+
+```{r}
+d %>%
+    mutate(incitation_dummy = ifelse(incitation > 0,1,0)) %>%
+    lm(Y~incitation_dummy,data=.) %>%
+    summary(.)
+```
+
+En ajoutant des contrôles, presque aucun changement : l'impact est significatif à sexe/âge/éducation donné. Cela se voyait déjà en partie (hors intéractions) en regardant les variables par sous-groupe.
+
+```{r}
+# Attention : on inclue tous les variables en numérique, normalement pas à faire pour l'éducation (suppose un effet marginal constant entre deux niveaux)
+d %>%
+    mutate(incitation_dummy = ifelse(incitation > 0,1,0)) %>%
+    lm(Y~incitation_dummy + age + sexe + education,data=.) %>%
+    summary(.)
+```
+
+Si on utilise directement la variable incitation, l'interprétation n'est plus la même. L'augmentation de l'incitation de 1 unité entraine une augmentation de la probabilité d'aller chercher ses résultats de 0,16 points à âge, sexe et diplôme constant. Donc l'augmentation de l'incitation de 100 augmente la probabilité de 16 points de pourcentage.
+
+
+```{r}
+# Attention : on inclue tous les variables en numérique, normalement pas à faire pour l'éducation (suppose un effet marginal constant entre deux niveaux)
+d %>%
+    mutate(incitation_dummy = ifelse(incitation > 0,1,0)) %>%
+    lm(Y~incitation + age + sexe + education,data=.) %>%
+    summary(.)
+```
+
+en utilisant la variable de manière catégorielle, on revient sur le cas précédent en distinguant cette fois par sous-groupe d'incitation.
+
+
+```{r}
+# Attention : on inclue tous les variables en numérique, normalement pas à faire pour l'éducation (suppose un effet marginal constant entre deux niveaux)
+d %>%
+    mutate(incitation_dummy = ifelse(incitation > 0,1,0)) %>%
+    lm(Y~as.factor(incitation) + age + sexe + education,data=.) %>%
+    summary(.)
+```
+
+En résumé, l'impact de la mesure semble fort mais le montant de l'incitation semble non linéaire. Une petite incitation a un effet relativement plus fort qu'une grosse incitation.
+
+# hétérogénéité
+
+Croisement par sexe : les hommes vont moins souvent chercher leur résultat mais l'incitation a un effet plus fort pour eux pour chercher leurs résultats. Résultat toutefois pas significatif statistiquement.
+
+```{r}
+# Attention : on inclue tous les variables en numérique, normalement pas à faire pour l'éducation (suppose un effet marginal constant entre deux niveaux)
+d %>%
+    mutate(incitation_dummy = ifelse(incitation > 0,1,0)) %>%
+    lm(Y~incitation_dummy*sexe + age + education,data=.) %>%
+    summary(.)
+```
+
+Croisement par niveau d'éducation : résultat non significatif donc a priori on ne peut détecter d'hétérogénéité par niveau d'éducation. Au niveau du signe de l'effet, effet plus fort pour les moins éduqués.
+
+```{r}
+# Attention : on inclue tous les variables en numérique, normalement pas à faire pour l'éducation (suppose un effet marginal constant entre deux niveaux)
+d %>%
+    mutate(incitation_dummy = ifelse(incitation > 0,1,0)) %>%
+    lm(Y~incitation_dummy*education +sexe + age,data=.) %>%
+    summary(.)
+```

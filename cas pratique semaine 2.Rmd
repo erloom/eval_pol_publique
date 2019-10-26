@@ -3,12 +3,23 @@ title: "Eval - semaine 2"
 output: html_notebook
 ---
 
-
+On suppose que le fichier RCT.Rdata a été téléchargé.
 
 ```{r}
 d <- load("RCT.Rdata")
 d <- x
 ```
+
+```{r}
+# Structure de la base
+str(d)
+```
+
+```{r}
+# Prévalance HIV
+table(d$hiv2004)
+```
+
 
 Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
 
